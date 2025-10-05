@@ -105,7 +105,7 @@ resource "aws_lb" "spot_submission_service_network_load_balancer" {
 }
 
 resource "aws_lb_target_group" "spot_submission_service_target_group" {
-  name        = "spot-submission-service-target-group"
+  name        = "spot-submission-service-tg"
   port        = 80
   protocol    = "TCP"
   vpc_id      = data.terraform_remote_state.infra_vpc.outputs.aws_vpc_ecs_vpc_id
@@ -121,7 +121,7 @@ resource "aws_lb_target_group" "spot_submission_service_target_group" {
   }
 }
 
-resource "aws_lb_listener" "spot_submissionservice_network_load_balancer_listener" {
+resource "aws_lb_listener" "spot_submission_service_network_load_balancer_listener" {
   load_balancer_arn = aws_lb.spot_submission_service_network_load_balancer.arn
   port              = 80
   protocol          = "TCP"
