@@ -1,16 +1,3 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "6.11.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = "ap-southeast-1"
-}
-
 variable "image_uri" {
   description = "The full ECR image URI to deploy"
   type        = string
