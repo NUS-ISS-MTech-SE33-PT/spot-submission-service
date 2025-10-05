@@ -1,0 +1,11 @@
+services:
+  makangoapi:
+    build:
+      context: spot-submission-service
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - HTTP_PORTS=80
+    restart: unless-stopped
