@@ -50,7 +50,7 @@ resource "aws_ecs_task_definition" "spot_submission_service_task" {
 
   container_definitions = jsonencode([
     {
-      name      = "spot-submission-container"
+      name      = "spot-submission-service-container"
       image     = var.image_uri
       essential = true
       portMappings = [
