@@ -133,15 +133,15 @@ resource "aws_lb_listener" "spot_submission_service_network_load_balancer_listen
 }
 
 resource "aws_apigatewayv2_integration" "spot_submission_service_integration" {
-  api_id                 = data.terraform_remote_state.infra_api_gateway.outputs.aws_apigatewayv2_api_makan_go_http_api_id
-  integration_type       = "HTTP_PROXY"
-  integration_uri        = aws_lb_listener.spot_submission_service_network_load_balancer_listener.arn
-  connection_type        = "VPC_LINK"
-  connection_id          = data.terraform_remote_state.infra_api_gateway.outputs.aws_apigatewayv2_vpc_link_ecs_vpc_link_id
-  integration_method     = "ANY"
+  api_id             = data.terraform_remote_state.infra_api_gateway.outputs.aws_apigatewayv2_api_makan_go_http_api_id
+  integration_type   = "HTTP_PROXY"
+  integration_uri    = aws_lb_listener.spot_submission_service_network_load_balancer_listener.arn
+  connection_type    = "VPC_LINK"
+  connection_id      = data.terraform_remote_state.infra_api_gateway.outputs.aws_apigatewayv2_vpc_link_ecs_vpc_link_id
+  integration_method = "ANY"
 
   request_parameters = {
-    "overwrite:path" = "$request.path",
+    "overwrite:path"           = "$request.path",
     "append:header.x-user-sub" = "$context.authorizer.claims.sub"
   }
 
@@ -154,7 +154,7 @@ resource "aws_apigatewayv2_route" "auth_route" {
   for_each = toset([
     "GET /spots/submissions/health",
     "POST /spots/submissions",
-    "GET /moderation/submissions"
+    "GET /moderation/submissions",
     "POST /moderation/submissions/{id}/approve",
     "POST /moderation/submissions/{id}/reject"
   ])
