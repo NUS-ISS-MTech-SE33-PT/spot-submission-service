@@ -1,6 +1,12 @@
+using Amazon.DynamoDBv2;
+using Microsoft.AspNetCore.Mvc;
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddDefaultAWSOptions(builder.Configuration.GetAWSOptions());
+builder.Services.AddAWSService<IAmazonDynamoDB>();
+builder.Services.AddScoped<SpotSubmissionRepository>();
 
 var app = builder.Build();
 if (app.Environment.IsDevelopment())
@@ -25,5 +31,47 @@ app.Use(async (context, next) =>
 
 // GET /spots/submissions/health
 app.MapGet("/spots/submissions/health", () => Results.Ok(DateTime.Now));
+
+// POST /spots/submissions
+app.MapPost("/spots/submissions",
+    async (CreateSpotSubmissionRequest request, [FromServices] SpotSubmissionRepository repo) =>
+{
+    var submission = new SpotSubmission
+    {
+        Name = request.Name,
+        Address = request.Address,
+        PhotoUrl = request.PhotoUrl
+    };
+
+    await repo.SaveAsync(submission);
+
+    return Results.Ok(new CreateSpotSubmissionResponse { Id = submission.Id, Status = submission.Status });
+});
+
+// GET /moderation/submissions
+app.MapGet("/moderation/submissions",
+    async ([FromServices] SpotSubmissionRepository repo) =>
+{
+    var submissions = await repo.GetAllAsync();
+    return Results.Ok(submissions);
+});
+
+// POST /moderation/submissions/{id}/approve
+app.MapPost("/moderation/submissions/{id}/approve",
+    async (string id, [FromServices] SpotSubmissionRepository repo) =>
+{
+    if (!await repo.ExistsAsync(id)) return Results.NotFound();
+    await repo.ApproveAsync(id);
+    return Results.Ok();
+});
+
+// POST /moderation/submissions/{id}/reject
+app.MapPost("/moderation/submissions/{id}/reject",
+    async (string id, [FromServices] SpotSubmissionRepository repo) =>
+{
+    if (!await repo.ExistsAsync(id)) return Results.NotFound();
+    await repo.RejectAsync(id);
+    return Results.Ok();
+});
 
 app.Run();

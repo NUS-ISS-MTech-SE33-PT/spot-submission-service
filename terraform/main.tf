@@ -150,9 +150,13 @@ resource "aws_apigatewayv2_integration" "spot_submission_service_integration" {
   }
 }
 
-resource "aws_apigatewayv2_route" "no_auth_route" {
+resource "aws_apigatewayv2_route" "auth_route" {
   for_each = toset([
-    "GET /spots/submissions/health"
+    "GET /spots/submissions/health",
+    "POST /spots/submissions",
+    "GET /moderation/submissions"
+    "POST /moderation/submissions/{id}/approve",
+    "POST /moderation/submissions/{id}/reject"
   ])
 
   api_id    = data.terraform_remote_state.infra_api_gateway.outputs.aws_apigatewayv2_api_makan_go_http_api_id
