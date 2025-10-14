@@ -1,12 +1,18 @@
 using Amazon.DynamoDBv2;
+using Amazon.S3;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.Linq;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddDefaultAWSOptions(builder.Configuration.GetAWSOptions());
 builder.Services.AddAWSService<IAmazonDynamoDB>();
+builder.Services.AddAWSService<IAmazonS3>();
 builder.Services.AddScoped<SpotSubmissionRepository>();
+builder.Services.Configure<SpotSubmissionStorageOptions>(builder.Configuration.GetSection("SpotSubmissionStorage"));
+builder.Services.AddScoped<PhotoUploadService>();
 
 var app = builder.Build();
 if (app.Environment.IsDevelopment())
@@ -32,6 +38,33 @@ app.Use(async (context, next) =>
 // GET /spots/submissions/health
 app.MapGet("/spots/submissions/health", () => Results.Ok(DateTime.Now));
 
+// POST /spots/submissions/photos/presign
+app.MapPost("/spots/submissions/photos/presign",
+    (HttpContext httpContext, [FromBody] CreatePhotoUploadUrlRequest request, [FromServices] PhotoUploadService uploadService) =>
+    {
+        var subject = httpContext.Request.Headers["x-user-sub"].FirstOrDefault()?.Trim();
+        if (string.IsNullOrWhiteSpace(subject))
+        {
+            return Results.Json(
+                new { message = "Unauthorized — login required before uploading a submission photo" },
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.FileName) || string.IsNullOrWhiteSpace(request.ContentType))
+        {
+            return Results.BadRequest(new { message = "fileName and contentType are required." });
+        }
+
+        var descriptor = uploadService.CreateUploadUrl(request.FileName, request.ContentType, subject);
+        return Results.Ok(new CreatePhotoUploadUrlResponse
+        {
+            UploadUrl = descriptor.UploadUrl,
+            PhotoUrl = descriptor.FileUrl,
+            StorageKey = descriptor.StorageKey,
+            ExpiresAt = descriptor.ExpiresAt
+        });
+    });
+
 // POST /spots/submissions
 app.MapPost("/spots/submissions",
     async (CreateSpotSubmissionRequest request, [FromServices] SpotSubmissionRepository repo) =>
@@ -40,7 +73,8 @@ app.MapPost("/spots/submissions",
     {
         Name = request.Name,
         Address = request.Address,
-        PhotoUrl = request.PhotoUrl
+        PhotoUrl = request.PhotoUrl,
+        PhotoStorageKey = request.PhotoStorageKey
     };
 
     await repo.SaveAsync(submission);
