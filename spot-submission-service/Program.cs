@@ -67,19 +67,38 @@ app.MapPost("/spots/submissions/photos/presign",
 
 // POST /spots/submissions
 app.MapPost("/spots/submissions",
-    async (CreateSpotSubmissionRequest request, [FromServices] SpotSubmissionRepository repo) =>
+    async (HttpContext httpContext, CreateSpotSubmissionRequest request, [FromServices] SpotSubmissionRepository repo) =>
 {
+    var subject = httpContext.Request.Headers["x-user-sub"].FirstOrDefault()?.Trim();
+    if (string.IsNullOrWhiteSpace(subject))
+    {
+        return Results.Json(
+            new { message = "Unauthorized — login required before submitting a new spot" },
+            statusCode: StatusCodes.Status401Unauthorized);
+    }
+
+    if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Address))
+    {
+        return Results.BadRequest(new { message = "name and address are required." });
+    }
+
     var submission = new SpotSubmission
     {
-        Name = request.Name,
-        Address = request.Address,
-        PhotoUrl = request.PhotoUrl,
-        PhotoStorageKey = request.PhotoStorageKey
+        Name = request.Name.Trim(),
+        Address = request.Address.Trim(),
+        PhotoUrl = string.IsNullOrWhiteSpace(request.PhotoUrl) ? null : request.PhotoUrl,
+        PhotoStorageKey = string.IsNullOrWhiteSpace(request.PhotoStorageKey) ? null : request.PhotoStorageKey,
+        SubmittedBy = subject
     };
 
     await repo.SaveAsync(submission);
 
-    return Results.Ok(new CreateSpotSubmissionResponse { Id = submission.Id, Status = submission.Status });
+    return Results.Ok(new CreateSpotSubmissionResponse
+    {
+        Id = submission.Id,
+        Status = submission.Status,
+        SubmittedBy = submission.SubmittedBy
+    });
 });
 
 // GET /moderation/submissions

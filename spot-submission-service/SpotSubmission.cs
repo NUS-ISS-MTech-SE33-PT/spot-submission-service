@@ -6,4 +6,5 @@ public class SpotSubmission
     public string? PhotoUrl { get; set; }
     public string? PhotoStorageKey { get; set; }
     public string Status { get; set; } = "pending";
+    public string SubmittedBy { get; set; } = string.Empty;
 }

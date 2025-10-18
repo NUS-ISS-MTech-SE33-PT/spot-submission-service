@@ -19,7 +19,8 @@ public class SpotSubmissionRepository
             ["id"] = new AttributeValue { S = submission.Id },
             ["name"] = new AttributeValue { S = submission.Name },
             ["address"] = new AttributeValue { S = submission.Address },
-            ["status"] = new AttributeValue { S = submission.Status }
+            ["status"] = new AttributeValue { S = submission.Status },
+            ["submittedBy"] = new AttributeValue { S = submission.SubmittedBy }
         };
 
         if (!string.IsNullOrWhiteSpace(submission.PhotoUrl))
@@ -57,7 +58,8 @@ public class SpotSubmissionRepository
             Address = item["address"].S,
             PhotoUrl = item.TryGetValue("photoUrl", out var photoUrl) ? photoUrl.S : null,
             PhotoStorageKey = item.TryGetValue("photoStorageKey", out var photoStorageKey) ? photoStorageKey.S : null,
-            Status = item["status"].S
+            Status = item["status"].S,
+            SubmittedBy = item.TryGetValue("submittedBy", out var submittedBy) ? submittedBy.S : string.Empty
         }).ToList();
     }
 
