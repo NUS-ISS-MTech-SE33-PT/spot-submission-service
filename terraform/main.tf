@@ -39,6 +39,15 @@ data "terraform_remote_state" "infra_api_gateway" {
   }
 }
 
+data "terraform_remote_state" "infra_s3" {
+  backend = "s3"
+  config = {
+    bucket = "terraform-state-bucket-d55fab12"
+    key    = "prod/infra/s3/terraform.tfstate"
+    region = "ap-southeast-1"
+  }
+}
+
 resource "aws_ecs_task_definition" "spot_submission_service_task" {
   family                   = "spot-submission-service-task"
   network_mode             = "awsvpc"
@@ -63,6 +72,22 @@ resource "aws_ecs_task_definition" "spot_submission_service_task" {
         {
           name  = "HTTP_PORTS"
           value = "80"
+        },
+        {
+          name  = "SpotSubmissionStorage__BucketName"
+          value = data.terraform_remote_state.infra_s3.outputs.bucket_name
+        },
+        {
+          name  = "SpotSubmissionStorage__KeyPrefix"
+          value = data.terraform_remote_state.infra_s3.outputs.photos_prefix
+        },
+        {
+          name  = "SpotSubmissionStorage__UrlExpiryMinutes"
+          value = "15"
+        },
+        {
+          name  = "SpotSubmissionStorage__PublicBaseUrl"
+          value = "https://${data.terraform_remote_state.infra_s3.outputs.cloudfront_domain_name}"
         }
       ]
       logConfiguration = {
@@ -152,6 +177,7 @@ resource "aws_apigatewayv2_integration" "spot_submission_service_integration" {
 
 resource "aws_apigatewayv2_route" "auth_route" {
   for_each = toset([
+    "POST /spots/submissions/photos/presign",
     "GET /spots/submissions/health",
     "POST /spots/submissions",
     "GET /moderation/submissions",
