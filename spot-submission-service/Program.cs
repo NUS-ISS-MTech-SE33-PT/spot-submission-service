@@ -42,7 +42,7 @@ app.MapGet("/spots/submissions/health", () => Results.Ok(DateTime.Now));
 app.MapPost("/spots/submissions/photos/presign",
     (HttpContext httpContext, [FromBody] CreatePhotoUploadUrlRequest request, [FromServices] PhotoUploadService uploadService) =>
     {
-        var subject = httpContext.Request.Headers["x-user-sub"].FirstOrDefault()?.Trim();
+        var subject = JwtSubjectResolver.ResolveUserId(httpContext);
 
         if (string.IsNullOrWhiteSpace(request.FileName) || string.IsNullOrWhiteSpace(request.ContentType))
         {
@@ -63,7 +63,7 @@ app.MapPost("/spots/submissions/photos/presign",
 app.MapPost("/spots/submissions",
     async (HttpContext httpContext, CreateSpotSubmissionRequest request, [FromServices] SpotSubmissionRepository repo) =>
 {
-    var subject = httpContext.Request.Headers["x-user-sub"].FirstOrDefault()?.Trim();
+    var subject = JwtSubjectResolver.ResolveUserId(httpContext);
     if (string.IsNullOrWhiteSpace(subject))
     {
         return Results.Json(
