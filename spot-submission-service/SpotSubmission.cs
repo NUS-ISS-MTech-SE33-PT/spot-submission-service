@@ -13,6 +13,8 @@ public class SpotSubmission
     public string District { get; set; } = string.Empty;
     public List<string> PhotoUrls { get; set; } = new();
     public List<string> PhotoStorageKeys { get; set; } = new();
+    public bool IsCenter { get; set; }
+    public ParentCenterSubmission? ParentCenter { get; set; }
     public string Status { get; set; } = "pending";
     public string SubmittedBy { get; set; } = string.Empty;
     public bool Open { get; set; } = true;
@@ -22,4 +24,11 @@ public class SpotSubmission
 
     public string ThumbnailStorageKey =>
         PhotoStorageKeys.Count > 0 ? PhotoStorageKeys[0] : string.Empty;
+}
+
+public class ParentCenterSubmission
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ThumbnailUrl { get; set; } = string.Empty;
 }

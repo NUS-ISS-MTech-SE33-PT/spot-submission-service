@@ -39,6 +39,7 @@ public class SpotSubmissionRepository
             ["district"] = new AttributeValue { S = submission.District },
             ["status"] = new AttributeValue { S = submission.Status },
             ["submittedBy"] = new AttributeValue { S = submission.SubmittedBy },
+            ["isCenter"] = new AttributeValue { BOOL = submission.IsCenter },
             ["open"] = new AttributeValue { BOOL = submission.Open },
         };
 
@@ -60,6 +61,19 @@ public class SpotSubmissionRepository
         {
             item["photoStorageKeys"] = new AttributeValue { L = storageValues };
             item["photoStorageKey"] = new AttributeValue { S = submission.ThumbnailStorageKey };
+        }
+
+        if (submission.ParentCenter != null)
+        {
+            item["parentCenter"] = new AttributeValue
+            {
+                M = new Dictionary<string, AttributeValue>
+                {
+                    ["id"] = new AttributeValue { S = submission.ParentCenter.Id },
+                    ["name"] = new AttributeValue { S = submission.ParentCenter.Name },
+                    ["thumbnailUrl"] = new AttributeValue { S = submission.ParentCenter.ThumbnailUrl }
+                }
+            };
         }
 
         var request = new PutItemRequest
@@ -163,7 +177,7 @@ public class SpotSubmissionRepository
             ["placeType"] = new AttributeValue { S = submission.PlaceType },
             ["avgPrice"] = new AttributeValue { N = "0" },
             ["open"] = new AttributeValue { BOOL = submission.Open },
-            ["isCenter"] = new AttributeValue { BOOL = IsCenter(submission.PlaceType) },
+            ["isCenter"] = new AttributeValue { BOOL = submission.IsCenter },
             ["latitude"] = new AttributeValue
             {
                 N = submission.Latitude.ToString(CultureInfo.InvariantCulture)
@@ -178,6 +192,19 @@ public class SpotSubmissionRepository
             ["district"] = new AttributeValue { S = submission.District },
             ["thumbnailUrl"] = new AttributeValue { S = submission.ThumbnailUrl }
         };
+
+        if (submission.ParentCenter != null)
+        {
+            item["parentCenter"] = new AttributeValue
+            {
+                M = new Dictionary<string, AttributeValue>
+                {
+                    ["id"] = new AttributeValue { S = submission.ParentCenter.Id },
+                    ["name"] = new AttributeValue { S = submission.ParentCenter.Name },
+                    ["thumbnailUrl"] = new AttributeValue { S = submission.ParentCenter.ThumbnailUrl }
+                }
+            };
+        }
 
         var request = new PutItemRequest
         {
@@ -209,12 +236,6 @@ public class SpotSubmissionRepository
         };
 
         await _dynamoDb.UpdateItemAsync(request);
-    }
-
-    private static bool IsCenter(string placeType)
-    {
-        return placeType.Equals("Food Centre", StringComparison.OrdinalIgnoreCase)
-            || placeType.Equals("Food Center", StringComparison.OrdinalIgnoreCase);
     }
 
     private static SpotSubmission MapSubmission(Dictionary<string, AttributeValue> item)
@@ -268,6 +289,24 @@ public class SpotSubmissionRepository
             District = item.TryGetValue("district", out var districtValue) ? districtValue.S ?? string.Empty : string.Empty,
             PhotoUrls = photoUrls,
             PhotoStorageKeys = photoStorageKeys,
+            IsCenter = item.TryGetValue("isCenter", out var isCenterValue) &&
+                (isCenterValue.BOOL.HasValue
+                    ? isCenterValue.BOOL.Value
+                    : bool.TryParse(isCenterValue.S, out var parsed) && parsed),
+            ParentCenter = item.TryGetValue("parentCenter", out var parentCenterValue) && parentCenterValue.M != null
+                ? new ParentCenterSubmission
+                {
+                    Id = parentCenterValue.M.TryGetValue("id", out var parentId)
+                        ? parentId.S ?? string.Empty
+                        : string.Empty,
+                    Name = parentCenterValue.M.TryGetValue("name", out var parentName)
+                        ? parentName.S ?? string.Empty
+                        : string.Empty,
+                    ThumbnailUrl = parentCenterValue.M.TryGetValue("thumbnailUrl", out var parentThumb)
+                        ? parentThumb.S ?? string.Empty
+                        : string.Empty,
+                }
+                : null,
             Open = item.TryGetValue("open", out var openValue) && openValue.BOOL.HasValue ? openValue.BOOL.Value : true,
         };
 

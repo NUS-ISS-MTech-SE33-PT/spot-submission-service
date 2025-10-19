@@ -12,4 +12,13 @@ public class CreateSpotSubmissionRequest
     public string District { get; set; } = string.Empty;
     public List<string> PhotoUrls { get; set; } = new();
     public List<string> PhotoStorageKeys { get; set; } = new();
+    public bool IsCenter { get; set; }
+    public ParentCenterSubmissionRequest? ParentCenter { get; set; }
+}
+
+public class ParentCenterSubmissionRequest
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ThumbnailUrl { get; set; } = string.Empty;
 }
