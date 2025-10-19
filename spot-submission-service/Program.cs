@@ -43,12 +43,6 @@ app.MapPost("/spots/submissions/photos/presign",
     (HttpContext httpContext, [FromBody] CreatePhotoUploadUrlRequest request, [FromServices] PhotoUploadService uploadService) =>
     {
         var subject = httpContext.Request.Headers["x-user-sub"].FirstOrDefault()?.Trim();
-        if (string.IsNullOrWhiteSpace(subject))
-        {
-            return Results.Json(
-                new { message = "Unauthorized — login required before uploading a submission photo" },
-                statusCode: StatusCodes.Status401Unauthorized);
-        }
 
         if (string.IsNullOrWhiteSpace(request.FileName) || string.IsNullOrWhiteSpace(request.ContentType))
         {
