@@ -2,6 +2,7 @@ using Amazon.DynamoDBv2;
 using Amazon.S3;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System;
 using System.Linq;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -71,18 +72,107 @@ app.MapPost("/spots/submissions",
             statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Address))
+    if (string.IsNullOrWhiteSpace(request.Name) ||
+        string.IsNullOrWhiteSpace(request.Address) ||
+        string.IsNullOrWhiteSpace(request.PlaceType) ||
+        string.IsNullOrWhiteSpace(request.OpeningHours) ||
+        string.IsNullOrWhiteSpace(request.District))
     {
-        return Results.BadRequest(new { message = "name and address are required." });
+        return Results.BadRequest(new
+        {
+            message = "name, address, placeType, openingHours, and district are required."
+        });
+    }
+
+    if (request.PhotoUrls == null || request.PhotoStorageKeys == null ||
+        request.PhotoUrls.Count == 0 || request.PhotoStorageKeys.Count == 0)
+    {
+        return Results.BadRequest(new { message = "At least one photo is required." });
+    }
+
+    if (request.PhotoUrls.Count != request.PhotoStorageKeys.Count)
+    {
+        return Results.BadRequest(new { message = "photoUrls and photoStorageKeys must have the same length." });
+    }
+
+    if (request.PhotoUrls.Any(string.IsNullOrWhiteSpace) ||
+        request.PhotoStorageKeys.Any(string.IsNullOrWhiteSpace))
+    {
+        return Results.BadRequest(new { message = "photoUrls and photoStorageKeys cannot contain empty values." });
+    }
+
+    var placeType = request.PlaceType.Trim();
+    var isCenter = request.IsCenter;
+    var requiresParentCenter = placeType.Equals("Hawker Stall", StringComparison.OrdinalIgnoreCase)
+        || placeType.Equals("Food Court Stall", StringComparison.OrdinalIgnoreCase);
+
+    if (!isCenter && string.IsNullOrWhiteSpace(request.FoodType))
+    {
+        return Results.BadRequest(new { message = "foodType is required for non-center submissions." });
+    }
+
+    if (isCenter && !placeType.Equals("Food Center", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { message = "placeType must be 'Food Center' when isCenter is true." });
+    }
+
+    if (requiresParentCenter && request.ParentCenter == null)
+    {
+        return Results.BadRequest(new { message = "Hawker stalls and food court stalls must specify a parent centre." });
+    }
+
+    if (request.ParentCenter != null &&
+        (string.IsNullOrWhiteSpace(request.ParentCenter.Id) ||
+         string.IsNullOrWhiteSpace(request.ParentCenter.Name)))
+    {
+        return Results.BadRequest(new { message = "parentCenter.id and parentCenter.name are required when parentCenter is provided." });
+    }
+
+    if (double.IsNaN(request.Latitude) || double.IsInfinity(request.Latitude) ||
+        request.Latitude < -90 || request.Latitude > 90)
+    {
+        return Results.BadRequest(new { message = "latitude must be between -90 and 90." });
+    }
+
+    if (double.IsNaN(request.Longitude) || double.IsInfinity(request.Longitude) ||
+        request.Longitude < -180 || request.Longitude > 180)
+    {
+        return Results.BadRequest(new { message = "longitude must be between -180 and 180." });
+    }
+
+    var photoUrls = request.PhotoUrls.Select(url => url.Trim()).ToList();
+    var photoStorageKeys = request.PhotoStorageKeys.Select(key => key.Trim()).ToList();
+    var foodTypeValue = isCenter
+        ? (string.IsNullOrWhiteSpace(request.FoodType) ? "Food Centre" : request.FoodType.Trim())
+        : request.FoodType.Trim();
+
+    ParentCenterSubmission? parentCenter = null;
+    if (!isCenter && request.ParentCenter != null)
+    {
+        parentCenter = new ParentCenterSubmission
+        {
+            Id = request.ParentCenter.Id.Trim(),
+            Name = request.ParentCenter.Name.Trim(),
+            ThumbnailUrl = request.ParentCenter.ThumbnailUrl?.Trim() ?? string.Empty,
+        };
     }
 
     var submission = new SpotSubmission
     {
         Name = request.Name.Trim(),
         Address = request.Address.Trim(),
-        PhotoUrl = string.IsNullOrWhiteSpace(request.PhotoUrl) ? null : request.PhotoUrl,
-        PhotoStorageKey = string.IsNullOrWhiteSpace(request.PhotoStorageKey) ? null : request.PhotoStorageKey,
-        SubmittedBy = subject
+        FoodType = foodTypeValue,
+        PlaceType = placeType,
+        OpeningHours = request.OpeningHours.Trim(),
+        Latitude = request.Latitude,
+        Longitude = request.Longitude,
+        District = request.District.Trim(),
+        PhotoUrls = photoUrls,
+        PhotoStorageKeys = photoStorageKeys,
+        IsCenter = isCenter,
+        ParentCenter = parentCenter,
+        SubmittedBy = subject,
+        Open = true
     };
 
     await repo.SaveAsync(submission);
@@ -107,9 +197,22 @@ app.MapGet("/moderation/submissions",
 app.MapPost("/moderation/submissions/{id}/approve",
     async (string id, [FromServices] SpotSubmissionRepository repo) =>
 {
-    if (!await repo.ExistsAsync(id)) return Results.NotFound();
-    await repo.ApproveAsync(id);
-    return Results.Ok();
+    var submission = await repo.GetByIdAsync(id);
+    if (submission is null) return Results.NotFound();
+    if (submission.PhotoUrls.Count == 0)
+    {
+        return Results.BadRequest(new { message = "Submission photos are required before approval." });
+    }
+    var requiresParentCenter = submission.PlaceType.Equals("Hawker Stall", StringComparison.OrdinalIgnoreCase)
+        || submission.PlaceType.Equals("Food Court Stall", StringComparison.OrdinalIgnoreCase);
+    if (requiresParentCenter && submission.ParentCenter == null)
+    {
+        return Results.BadRequest(new { message = "Parent centre must be supplied before approving this submission." });
+    }
+
+    submission.Status = "approved";
+    await repo.ApproveAsync(submission);
+    return Results.Ok(new { status = submission.Status, spotId = submission.Id });
 });
 
 // POST /moderation/submissions/{id}/reject
@@ -118,7 +221,7 @@ app.MapPost("/moderation/submissions/{id}/reject",
 {
     if (!await repo.ExistsAsync(id)) return Results.NotFound();
     await repo.RejectAsync(id);
-    return Results.Ok();
+    return Results.Ok(new { status = "rejected" });
 });
 
 app.Run();
