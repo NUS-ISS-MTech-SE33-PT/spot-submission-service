@@ -3,7 +3,9 @@ using Amazon.DynamoDBv2.Model;
 using Microsoft.Extensions.Configuration;
 using Moq;
 using NUnit.Framework;
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,7 +16,8 @@ public class SpotSubmissionRepositoryTests
     private Mock<IAmazonDynamoDB> _mockDynamoDb = null!;
     private Mock<IConfiguration> _mockConfig = null!;
     private SpotSubmissionRepository _repository = null!;
-    private const string TableName = "SpotSubmissionTable";
+    private const string TableName = "Submissions";
+    private const string SpotTableName = "Spots";
 
     [SetUp]
     public void SetUp()
@@ -22,72 +25,60 @@ public class SpotSubmissionRepositoryTests
         _mockDynamoDb = new Mock<IAmazonDynamoDB>();
         _mockConfig = new Mock<IConfiguration>();
         _mockConfig.Setup(c => c["DynamoDb"]).Returns(TableName);
+        _mockConfig.Setup(c => c["SpotsTable"]).Returns(SpotTableName);
+
         _repository = new SpotSubmissionRepository(_mockDynamoDb.Object, _mockConfig.Object);
     }
+
+    private SpotSubmission CreateTestSubmission() =>
+        new SpotSubmission
+        {
+            Id = "1",
+            Name = "Test Spot",
+            Address = "123 Street",
+            Status = "pending",
+            SubmittedBy = "user1",
+            FoodType = "Pizza",
+            PlaceType = "Restaurant",
+            OpeningHours = "9-22",
+            Latitude = 1.23,
+            Longitude = 4.56,
+            District = "Central",
+            PhotoUrls = new List<string> { "url1", "url2" },
+            PhotoStorageKeys = new List<string> { "key1", "key2" },
+            IsCenter = false,
+            Open = true,
+            ParentCenter = new ParentCenterSubmission
+            {
+                Id = "pc1",
+                Name = "Parent Center",
+                ThumbnailUrl = "pcThumb"
+            }
+        };
 
     [Test]
     public async Task SaveAsync_ShouldCallPutItemAsync_WithAllFields()
     {
-        // Arrange
-        var submission = new SpotSubmission
-        {
-            Id = "1",
-            Name = "Food Place",
-            Address = "123 Street",
-            Status = "pending",
-            PhotoUrl = "http://photo.jpg",
-            PhotoStorageKey = "photos/key.jpg"
-        };
+        var submission = CreateTestSubmission();
 
         _mockDynamoDb
             .Setup(d => d.PutItemAsync(It.IsAny<PutItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PutItemResponse());
 
-        // Act
         await _repository.SaveAsync(submission);
 
-        // Assert
         _mockDynamoDb.Verify(d => d.PutItemAsync(It.Is<PutItemRequest>(r =>
             r.TableName == TableName &&
             r.Item["id"].S == submission.Id &&
-            r.Item["name"].S == submission.Name &&
-            r.Item["address"].S == submission.Address &&
-            r.Item["status"].S == submission.Status &&
-            r.Item["photoUrl"].S == submission.PhotoUrl &&
-            r.Item["photoStorageKey"].S == submission.PhotoStorageKey
+            r.Item["photoUrls"].L.Count == 2 &&
+            r.Item["photoStorageKeys"].L.Count == 2 &&
+            r.Item["parentCenter"].M["id"].S == "pc1"
         ), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Test]
-    public async Task SaveAsync_ShouldNotIncludeOptionalFields_WhenNull()
+    public async Task GetAllAsync_ShouldReturnMappedSubmissions()
     {
-        // Arrange
-        var submission = new SpotSubmission
-        {
-            Id = "2",
-            Name = "No Photo",
-            Address = "456 Road",
-            Status = "pending"
-        };
-
-        _mockDynamoDb
-            .Setup(d => d.PutItemAsync(It.IsAny<PutItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PutItemResponse());
-
-        // Act
-        await _repository.SaveAsync(submission);
-
-        // Assert
-        _mockDynamoDb.Verify(d => d.PutItemAsync(It.Is<PutItemRequest>(r =>
-            !r.Item.ContainsKey("photoUrl") &&
-            !r.Item.ContainsKey("photoStorageKey")
-        ), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Test]
-    public async Task GetAllAsync_ShouldMapItemsCorrectly()
-    {
-        // Arrange
         var response = new ScanResponse
         {
             Items = new List<Dictionary<string, AttributeValue>>
@@ -95,66 +86,99 @@ public class SpotSubmissionRepositoryTests
                 new()
                 {
                     ["id"] = new AttributeValue { S = "1" },
-                    ["name"] = new AttributeValue { S = "Place 1" },
-                    ["address"] = new AttributeValue { S = "Addr 1" },
-                    ["photoUrl"] = new AttributeValue { S = "url1" },
-                    ["photoStorageKey"] = new AttributeValue { S = "key1" },
-                    ["status"] = new AttributeValue { S = "approved" }
-                },
-                new()
-                {
-                    ["id"] = new AttributeValue { S = "2" },
-                    ["name"] = new AttributeValue { S = "Place 2" },
-                    ["address"] = new AttributeValue { S = "Addr 2" },
-                    ["status"] = new AttributeValue { S = "pending" }
+                    ["name"] = new AttributeValue { S = "Spot1" },
+                    ["address"] = new AttributeValue { S = "Addr1" },
+                    ["status"] = new AttributeValue { S = "pending" },
+                    ["photoUrls"] = new AttributeValue
+                    {
+                        L = new List<AttributeValue> { new() { S = "url1" } }
+                    },
+                    ["photoStorageKeys"] = new AttributeValue
+                    {
+                        L = new List<AttributeValue> { new() { S = "key1" } }
+                    },
+                    ["isCenter"] = new AttributeValue { BOOL = true },
+                    ["open"] = new AttributeValue { BOOL = true }
                 }
             }
         };
 
-        _mockDynamoDb
-            .Setup(d => d.ScanAsync(It.IsAny<ScanRequest>(), It.IsAny<CancellationToken>()))
+        _mockDynamoDb.Setup(d => d.ScanAsync(It.IsAny<ScanRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);
 
-        // Act
         var results = await _repository.GetAllAsync();
 
-        // Assert
-        Assert.That(results, Has.Count.EqualTo(2));
-        Assert.That(results[0].PhotoUrl, Is.EqualTo("url1"));
-        Assert.That(results[1].PhotoUrl, Is.Null);
+        Assert.That(results.Count, Is.EqualTo(1));
+        Assert.That(results[0].PhotoUrls.Count, Is.EqualTo(1));
+        Assert.That(results[0].IsCenter, Is.True);
+        Assert.That(results[0].ThumbnailUrl, Is.EqualTo("url1"));
+        Assert.That(results[0].ThumbnailStorageKey, Is.EqualTo("key1"));
     }
 
     [Test]
-    public async Task ApproveAsync_ShouldCallUpdateStatusAsync_WithApproved()
+    public async Task GetByIdAsync_ShouldReturnSubmission_WhenFound()
     {
-        // Arrange
-        _mockDynamoDb
-            .Setup(d => d.UpdateItemAsync(It.IsAny<UpdateItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpdateItemResponse());
+        var item = new Dictionary<string, AttributeValue>
+        {
+            ["id"] = new AttributeValue { S = "1" },
+            ["name"] = new AttributeValue { S = "Spot1" },
+            ["address"] = new AttributeValue { S = "Addr1" },
+            ["status"] = new AttributeValue { S = "pending" }
+        };
 
-        // Act
-        await _repository.ApproveAsync("1");
+        _mockDynamoDb.Setup(d => d.GetItemAsync(It.IsAny<GetItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GetItemResponse { Item = item });
 
-        // Assert
-        _mockDynamoDb.Verify(d => d.UpdateItemAsync(It.Is<UpdateItemRequest>(r =>
-            r.TableName == TableName &&
-            r.Key["id"].S == "1" &&
-            r.ExpressionAttributeValues[":status"].S == "approved"
-        ), It.IsAny<CancellationToken>()), Times.Once);
+        var result = await _repository.GetByIdAsync("1");
+
+        Assert.That(result, Is.Not.Null);
+        Assert.That(result!.Name, Is.EqualTo("Spot1"));
     }
 
     [Test]
-    public async Task RejectAsync_ShouldCallUpdateStatusAsync_WithRejected()
+    public async Task GetByIdAsync_ShouldReturnNull_WhenNotFound()
     {
-        // Arrange
-        _mockDynamoDb
-            .Setup(d => d.UpdateItemAsync(It.IsAny<UpdateItemRequest>(), It.IsAny<CancellationToken>()))
+        _mockDynamoDb.Setup(d => d.GetItemAsync(It.IsAny<GetItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GetItemResponse { Item = new Dictionary<string, AttributeValue>() });
+
+        var result = await _repository.GetByIdAsync("999");
+
+        Assert.That(result, Is.Null);
+    }
+
+    [Test]
+    public async Task ApproveAsync_ShouldMoveToSpotTable_ThenDeleteOriginal()
+    {
+        var submission = CreateTestSubmission();
+
+        _mockDynamoDb.Setup(d => d.PutItemAsync(It.IsAny<PutItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PutItemResponse());
+        _mockDynamoDb.Setup(d => d.DeleteItemAsync(It.IsAny<DeleteItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeleteItemResponse());
+
+        await _repository.ApproveAsync(submission);
+
+        _mockDynamoDb.Verify(d => d.PutItemAsync(It.Is<PutItemRequest>(r => r.TableName == SpotTableName), It.IsAny<CancellationToken>()), Times.Once);
+        _mockDynamoDb.Verify(d => d.DeleteItemAsync(It.Is<DeleteItemRequest>(r => r.TableName == TableName), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Test]
+    public void ApproveAsync_ShouldThrow_WhenNoPhotos()
+    {
+        var submission = CreateTestSubmission();
+        submission.PhotoUrls.Clear();
+
+        Assert.ThrowsAsync<InvalidOperationException>(() => _repository.ApproveAsync(submission));
+    }
+
+    [Test]
+    public async Task RejectAsync_ShouldCallUpdateStatusAsync()
+    {
+        _mockDynamoDb.Setup(d => d.UpdateItemAsync(It.IsAny<UpdateItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new UpdateItemResponse());
 
-        // Act
-        await _repository.RejectAsync("2");
+        await _repository.RejectAsync("1");
 
-        // Assert
         _mockDynamoDb.Verify(d => d.UpdateItemAsync(It.Is<UpdateItemRequest>(r =>
             r.ExpressionAttributeValues[":status"].S == "rejected"
         ), It.IsAny<CancellationToken>()), Times.Once);
@@ -163,40 +187,39 @@ public class SpotSubmissionRepositoryTests
     [Test]
     public async Task ExistsAsync_ShouldReturnTrue_WhenItemExists()
     {
-        // Arrange
-        var response = new GetItemResponse
-        {
-            Item = new Dictionary<string, AttributeValue>
+        _mockDynamoDb.Setup(d => d.GetItemAsync(It.IsAny<GetItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GetItemResponse
             {
-                ["id"] = new AttributeValue { S = "1" },
-                ["name"] = new AttributeValue { S = "Test" }
-            }
-        };
+                Item = new Dictionary<string, AttributeValue> { ["id"] = new AttributeValue { S = "1" } }
+            });
 
-        _mockDynamoDb
-            .Setup(d => d.GetItemAsync(It.IsAny<GetItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(response);
-
-        // Act
         var result = await _repository.ExistsAsync("1");
 
-        // Assert
         Assert.That(result, Is.True);
     }
 
     [Test]
     public async Task ExistsAsync_ShouldReturnFalse_WhenItemDoesNotExist()
     {
-        // Arrange
-        var response = new GetItemResponse { Item = new Dictionary<string, AttributeValue>() };
-        _mockDynamoDb
-            .Setup(d => d.GetItemAsync(It.IsAny<GetItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(response);
+        _mockDynamoDb.Setup(d => d.GetItemAsync(It.IsAny<GetItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GetItemResponse { Item = new Dictionary<string, AttributeValue>() });
 
-        // Act
         var result = await _repository.ExistsAsync("999");
 
-        // Assert
         Assert.That(result, Is.False);
+    }
+
+    [Test]
+    public async Task DeleteAsync_ShouldCallDeleteItemAsync()
+    {
+        _mockDynamoDb.Setup(d => d.DeleteItemAsync(It.IsAny<DeleteItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeleteItemResponse());
+
+        await _repository.DeleteAsync("1");
+
+        _mockDynamoDb.Verify(d => d.DeleteItemAsync(It.Is<DeleteItemRequest>(r =>
+            r.TableName == TableName &&
+            r.Key["id"].S == "1"
+        ), It.IsAny<CancellationToken>()), Times.Once);
     }
 }

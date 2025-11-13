@@ -193,7 +193,8 @@ app.MapPost("/moderation/submissions/{id}/approve",
     async (string id, [FromServices] SpotSubmissionRepository repo) =>
 {
     if (!await repo.ExistsAsync(id)) return Results.NotFound();
-    await repo.ApproveAsync(id);
+    var submission = await repo.GetByIdAsync(id);
+    await repo.ApproveAsync(submission);
     return Results.Ok();
 });
 
