@@ -109,3 +109,5 @@ app.MapPost("/moderation/submissions/{id}/reject",
 });
 
 app.Run();
+
+public partial class Program { }
