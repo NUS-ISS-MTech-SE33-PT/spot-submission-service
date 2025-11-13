@@ -177,12 +177,7 @@ app.MapPost("/spots/submissions",
 
     await repo.SaveAsync(submission);
 
-    return Results.Ok(new CreateSpotSubmissionResponse
-    {
-        Id = submission.Id,
-        Status = submission.Status,
-        SubmittedBy = submission.SubmittedBy
-    });
+    return Results.Ok(new CreateSpotSubmissionResponse { Id = submission.Id, Status = submission.Status });
 });
 
 // GET /moderation/submissions
@@ -197,22 +192,9 @@ app.MapGet("/moderation/submissions",
 app.MapPost("/moderation/submissions/{id}/approve",
     async (string id, [FromServices] SpotSubmissionRepository repo) =>
 {
-    var submission = await repo.GetByIdAsync(id);
-    if (submission is null) return Results.NotFound();
-    if (submission.PhotoUrls.Count == 0)
-    {
-        return Results.BadRequest(new { message = "Submission photos are required before approval." });
-    }
-    var requiresParentCenter = submission.PlaceType.Equals("Hawker Stall", StringComparison.OrdinalIgnoreCase)
-        || submission.PlaceType.Equals("Food Court Stall", StringComparison.OrdinalIgnoreCase);
-    if (requiresParentCenter && submission.ParentCenter == null)
-    {
-        return Results.BadRequest(new { message = "Parent centre must be supplied before approving this submission." });
-    }
-
-    submission.Status = "approved";
-    await repo.ApproveAsync(submission);
-    return Results.Ok(new { status = submission.Status, spotId = submission.Id });
+    if (!await repo.ExistsAsync(id)) return Results.NotFound();
+    await repo.ApproveAsync(id);
+    return Results.Ok();
 });
 
 // POST /moderation/submissions/{id}/reject
@@ -221,7 +203,9 @@ app.MapPost("/moderation/submissions/{id}/reject",
 {
     if (!await repo.ExistsAsync(id)) return Results.NotFound();
     await repo.RejectAsync(id);
-    return Results.Ok(new { status = "rejected" });
+    return Results.Ok();
 });
 
 app.Run();
+
+public partial class Program { }
