@@ -48,6 +48,15 @@ data "terraform_remote_state" "infra_s3" {
   }
 }
 
+data "terraform_remote_state" "infra_dynamodb" {
+  backend = "s3"
+  config = {
+    bucket = "terraform-state-bucket-d55fab12"
+    key    = "prod/infra/dynamodb/terraform.tfstate"
+    region = "ap-southeast-1"
+  }
+}
+
 resource "aws_ecs_task_definition" "spot_submission_service_task" {
   family                   = "spot-submission-service-task"
   network_mode             = "awsvpc"
@@ -88,6 +97,14 @@ resource "aws_ecs_task_definition" "spot_submission_service_task" {
         {
           name  = "SpotSubmissionStorage__PublicBaseUrl"
           value = "https://${data.terraform_remote_state.infra_s3.outputs.cloudfront_domain_name}"
+        },
+        {
+          name  = "DynamoDb"
+          value = data.terraform_remote_state.infra_dynamodb.outputs.table_names["spot-submissions"]
+        },
+        {
+          name  = "SpotsTable"
+          value = data.terraform_remote_state.infra_dynamodb.outputs.table_names["spots"]
         }
       ]
       logConfiguration = {
