@@ -21,6 +21,8 @@ public class PhotoUploadService
             throw new InvalidOperationException("SpotSubmissionStorage:BucketName is not configured.");
         }
 
+        ValidateUploadRequest(fileName, contentType);
+
         var key = BuildObjectKey(fileName, userSubject);
         var expiryMinutes = _options.UrlExpiryMinutes <= 0 ? 15 : _options.UrlExpiryMinutes;
         var expiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes);
@@ -45,6 +47,79 @@ public class PhotoUploadService
             StorageKey = key,
             ExpiresAt = expiresAt
         };
+    }
+
+    public void ValidateUploadRequest(string fileName, string contentType)
+    {
+        var extension = ExtractExtension(fileName);
+        if (string.IsNullOrEmpty(extension))
+        {
+            throw new ArgumentException("Unsupported file extension.", nameof(fileName));
+        }
+
+        var normalizedContentType = NormalizeContentType(contentType);
+        if (!IsAllowed(_options.AllowedContentTypes, normalizedContentType))
+        {
+            throw new ArgumentException("Unsupported content type.", nameof(contentType));
+        }
+
+        if (!IsAllowed(_options.AllowedExtensions, extension))
+        {
+            throw new ArgumentException("Unsupported file extension.", nameof(fileName));
+        }
+
+        if (!IsMimeExtensionMatch(normalizedContentType, extension))
+        {
+            throw new ArgumentException("File extension does not match content type.");
+        }
+    }
+
+    public async Task ValidateUploadedObjectAsync(string storageKey, string photoUrl, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(storageKey))
+        {
+            throw new ArgumentException("photoStorageKey is required.", nameof(storageKey));
+        }
+
+        if (string.IsNullOrWhiteSpace(photoUrl))
+        {
+            throw new ArgumentException("photoUrl is required.", nameof(photoUrl));
+        }
+
+        var expectedUrl = $"{ResolvePublicBaseUrl()}/{storageKey}";
+        if (!string.Equals(photoUrl.Trim(), expectedUrl, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("photoUrl does not match photoStorageKey.");
+        }
+
+        var extension = ExtractExtension(storageKey);
+        if (string.IsNullOrEmpty(extension) || !IsAllowed(_options.AllowedExtensions, extension))
+        {
+            throw new ArgumentException("Unsupported file format.");
+        }
+
+        var metadata = await _s3.GetObjectMetadataAsync(new GetObjectMetadataRequest
+        {
+            BucketName = _options.BucketName,
+            Key = storageKey
+        }, cancellationToken);
+
+        var maxUploadBytes = _options.MaxUploadBytes > 0 ? _options.MaxUploadBytes : 5 * 1024 * 1024;
+        if (metadata.Headers.ContentLength > maxUploadBytes)
+        {
+            throw new ArgumentException($"File size exceeds limit ({maxUploadBytes} bytes).");
+        }
+
+        var contentType = NormalizeContentType(metadata.Headers.ContentType ?? metadata.ContentType);
+        if (!IsAllowed(_options.AllowedContentTypes, contentType))
+        {
+            throw new ArgumentException("Unsupported content type.");
+        }
+
+        if (!IsMimeExtensionMatch(contentType, extension))
+        {
+            throw new ArgumentException("Uploaded file format does not match its content type.");
+        }
     }
 
     private string BuildObjectKey(string fileName, string? userSubject)
@@ -117,6 +192,40 @@ public class PhotoUploadService
         }
 
         return hasInvalid ? string.Empty : new string(buffer);
+    }
+
+    private static bool IsAllowed(IEnumerable<string>? values, string candidate)
+    {
+        if (values == null)
+        {
+            return false;
+        }
+
+        return values.Any(value => string.Equals(value?.Trim(), candidate, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeContentType(string contentType)
+    {
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            return string.Empty;
+        }
+
+        var normalized = contentType.Trim().ToLowerInvariant();
+        var separator = normalized.IndexOf(';');
+        return separator >= 0 ? normalized[..separator].Trim() : normalized;
+    }
+
+    private static bool IsMimeExtensionMatch(string contentType, string extension)
+    {
+        return (contentType, extension) switch
+        {
+            ("image/jpeg", ".jpg") => true,
+            ("image/jpeg", ".jpeg") => true,
+            ("image/png", ".png") => true,
+            ("image/webp", ".webp") => true,
+            _ => false
+        };
     }
 
     private string ResolvePublicBaseUrl()

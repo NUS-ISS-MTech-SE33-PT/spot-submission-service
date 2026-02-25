@@ -55,7 +55,16 @@ app.MapPost("/spots/submissions/photos/presign",
             return Results.BadRequest(new { message = "fileName and contentType are required." });
         }
 
-        var descriptor = uploadService.CreateUploadUrl(request.FileName, request.ContentType, subject);
+        PhotoUploadDescriptor descriptor;
+        try
+        {
+            descriptor = uploadService.CreateUploadUrl(request.FileName, request.ContentType, subject);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { message = ex.Message });
+        }
+
         return Results.Ok(new CreatePhotoUploadUrlResponse
         {
             UploadUrl = descriptor.UploadUrl,
@@ -67,14 +76,37 @@ app.MapPost("/spots/submissions/photos/presign",
 
 // POST /spots/submissions
 app.MapPost("/spots/submissions",
-    async (CreateSpotSubmissionRequest request, [FromServices] SpotSubmissionRepository repo) =>
+    async (CreateSpotSubmissionRequest request, [FromServices] SpotSubmissionRepository repo, [FromServices] PhotoUploadService uploadService) =>
 {
+    if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Address))
+    {
+        return Results.BadRequest(new { message = "name and address are required." });
+    }
+
+    if (string.IsNullOrWhiteSpace(request.PhotoUrl) || string.IsNullOrWhiteSpace(request.PhotoStorageKey))
+    {
+        return Results.BadRequest(new { message = "photoUrl and photoStorageKey are required." });
+    }
+
+    try
+    {
+        await uploadService.ValidateUploadedObjectAsync(request.PhotoStorageKey, request.PhotoUrl);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+    catch (Amazon.S3.AmazonS3Exception)
+    {
+        return Results.BadRequest(new { message = "Uploaded photo is missing or inaccessible." });
+    }
+
     var submission = new SpotSubmission
     {
-        Name = request.Name,
-        Address = request.Address,
-        PhotoUrl = request.PhotoUrl,
-        PhotoStorageKey = request.PhotoStorageKey
+        Name = request.Name.Trim(),
+        Address = request.Address.Trim(),
+        PhotoUrl = request.PhotoUrl.Trim(),
+        PhotoStorageKey = request.PhotoStorageKey.Trim()
     };
 
     await repo.SaveAsync(submission);
