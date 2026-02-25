@@ -122,6 +122,34 @@ public class PhotoUploadService
         }
     }
 
+    public bool IsOwnedByUser(string storageKey, string photoUrl, string userSubject)
+    {
+        var normalizedSubject = NormalizeSubject(userSubject);
+        if (string.IsNullOrWhiteSpace(normalizedSubject))
+        {
+            return false;
+        }
+
+        var key = storageKey?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        var prefix = _options.KeyPrefix?.Trim('/') ?? string.Empty;
+        var ownerPrefix = string.IsNullOrEmpty(prefix)
+            ? $"{normalizedSubject}/"
+            : $"{prefix}/{normalizedSubject}/";
+
+        if (!key.StartsWith(ownerPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var expectedUrl = $"{ResolvePublicBaseUrl()}/{key}";
+        return string.Equals(photoUrl?.Trim(), expectedUrl, StringComparison.Ordinal);
+    }
+
     private string BuildObjectKey(string fileName, string? userSubject)
     {
         var prefix = _options.KeyPrefix?.Trim('/') ?? string.Empty;

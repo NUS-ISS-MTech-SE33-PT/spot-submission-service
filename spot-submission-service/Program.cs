@@ -211,6 +211,10 @@ app.MapPost("/spots/submissions",
     {
         for (var i = 0; i < photoStorageKeys.Count; i++)
         {
+            if (!uploadService.IsOwnedByUser(photoStorageKeys[i], photoUrls[i], subject))
+            {
+                return Results.BadRequest(new { message = "photoUrls/photoStorageKeys must belong to the authenticated user." });
+            }
             await uploadService.ValidateUploadedObjectAsync(photoStorageKeys[i], photoUrls[i]);
         }
     }
