@@ -1,5 +1,6 @@
 using Amazon.DynamoDBv2;
 using Amazon.S3;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System;
@@ -16,6 +17,50 @@ builder.Services.Configure<SpotSubmissionStorageOptions>(builder.Configuration.G
 builder.Services.AddScoped<PhotoUploadService>();
 
 var app = builder.Build();
+
+IResult ApiError(HttpContext context, int statusCode, string code, string message)
+{
+    return Results.Json(new
+    {
+        code,
+        message,
+        traceId = context.TraceIdentifier
+    }, statusCode: statusCode);
+}
+
+static string SanitizeHeaders(IHeaderDictionary headers)
+{
+    var maskedHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "Authorization",
+        "Cookie",
+        "Set-Cookie",
+        "x-user-sub"
+    };
+
+    return string.Join("; ", headers.Select(header =>
+    {
+        var value = maskedHeaders.Contains(header.Key) ? "***" : header.Value.ToString();
+        return $"{header.Key}: {value}";
+    }));
+}
+
+app.UseExceptionHandler(exceptionApp =>
+{
+    exceptionApp.Run(async context =>
+    {
+        var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+        app.Logger.LogError(exception, "Unhandled exception while processing request.");
+
+        var message = app.Environment.IsDevelopment()
+            ? (exception?.Message ?? "Unhandled server error.")
+            : "An unexpected error occurred.";
+
+        var result = ApiError(context, StatusCodes.Status500InternalServerError, "internal_error", message);
+        await result.ExecuteAsync(context);
+    });
+});
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -37,7 +82,7 @@ app.Use(async (context, next) =>
     var utcNow = DateTime.UtcNow.ToString("o");
     var method = context.Request.Method;
     var path = context.Request.Path;
-    var headers = string.Join("; ", context.Request.Headers.Select(h => $"{h.Key}: {h.Value}"));
+    var headers = SanitizeHeaders(context.Request.Headers);
 
     logger.LogInformation("{UtcNow}\t{Method}\t{Path} | Headers: {Headers}",
         utcNow, method, path, headers);
@@ -56,7 +101,7 @@ app.MapPost("/spots/submissions/photos/presign",
 
         if (string.IsNullOrWhiteSpace(request.FileName) || string.IsNullOrWhiteSpace(request.ContentType))
         {
-            return Results.BadRequest(new { message = "fileName and contentType are required." });
+            return ApiError(httpContext, StatusCodes.Status400BadRequest, "validation_error", "fileName and contentType are required.");
         }
 
         var descriptor = uploadService.CreateUploadUrl(request.FileName, request.ContentType, subject);
@@ -76,9 +121,7 @@ app.MapPost("/spots/submissions",
     var subject = JwtSubjectResolver.ResolveUserId(httpContext);
     if (string.IsNullOrWhiteSpace(subject))
     {
-        return Results.Json(
-            new { message = "Unauthorized — login required before submitting a new spot" },
-            statusCode: StatusCodes.Status401Unauthorized);
+        return ApiError(httpContext, StatusCodes.Status401Unauthorized, "unauthorized", "Login required before submitting a new spot.");
     }
 
     if (string.IsNullOrWhiteSpace(request.Name) ||
@@ -199,9 +242,12 @@ app.MapGet("/moderation/submissions",
 
 // POST /moderation/submissions/{id}/approve
 app.MapPost("/moderation/submissions/{id}/approve",
-    async (string id, [FromServices] SpotSubmissionRepository repo) =>
+    async (string id, HttpContext ctx, [FromServices] SpotSubmissionRepository repo) =>
 {
-    if (!await repo.ExistsAsync(id)) return Results.NotFound();
+    if (!await repo.ExistsAsync(id))
+    {
+        return ApiError(ctx, StatusCodes.Status404NotFound, "not_found", "Submission not found.");
+    }
     var submission = await repo.GetByIdAsync(id);
     await repo.ApproveAsync(submission);
     return Results.Ok();
@@ -209,9 +255,12 @@ app.MapPost("/moderation/submissions/{id}/approve",
 
 // POST /moderation/submissions/{id}/reject
 app.MapPost("/moderation/submissions/{id}/reject",
-    async (string id, [FromServices] SpotSubmissionRepository repo) =>
+    async (string id, HttpContext ctx, [FromServices] SpotSubmissionRepository repo) =>
 {
-    if (!await repo.ExistsAsync(id)) return Results.NotFound();
+    if (!await repo.ExistsAsync(id))
+    {
+        return ApiError(ctx, StatusCodes.Status404NotFound, "not_found", "Submission not found.");
+    }
     await repo.RejectAsync(id);
     return Results.Ok();
 });
