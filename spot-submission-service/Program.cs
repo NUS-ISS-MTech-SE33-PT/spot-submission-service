@@ -104,7 +104,16 @@ app.MapPost("/spots/submissions/photos/presign",
             return ApiError(httpContext, StatusCodes.Status400BadRequest, "validation_error", "fileName and contentType are required.");
         }
 
-        var descriptor = uploadService.CreateUploadUrl(request.FileName, request.ContentType, subject);
+        PhotoUploadDescriptor descriptor;
+        try
+        {
+            descriptor = uploadService.CreateUploadUrl(request.FileName, request.ContentType, subject);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { message = ex.Message });
+        }
+
         return Results.Ok(new CreatePhotoUploadUrlResponse
         {
             UploadUrl = descriptor.UploadUrl,
@@ -116,7 +125,7 @@ app.MapPost("/spots/submissions/photos/presign",
 
 // POST /spots/submissions
 app.MapPost("/spots/submissions",
-    async (HttpContext httpContext, CreateSpotSubmissionRequest request, [FromServices] SpotSubmissionRepository repo) =>
+    async (HttpContext httpContext, CreateSpotSubmissionRequest request, [FromServices] SpotSubmissionRepository repo, [FromServices] PhotoUploadService uploadService) =>
 {
     var subject = JwtSubjectResolver.ResolveUserId(httpContext);
     if (string.IsNullOrWhiteSpace(subject))
@@ -197,6 +206,22 @@ app.MapPost("/spots/submissions",
     var foodTypeValue = isCenter
         ? (string.IsNullOrWhiteSpace(request.FoodType) ? "Food Centre" : request.FoodType.Trim())
         : request.FoodType.Trim();
+
+    try
+    {
+        for (var i = 0; i < photoStorageKeys.Count; i++)
+        {
+            await uploadService.ValidateUploadedObjectAsync(photoStorageKeys[i], photoUrls[i]);
+        }
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+    catch (Amazon.S3.AmazonS3Exception)
+    {
+        return Results.BadRequest(new { message = "Uploaded photo is missing or inaccessible." });
+    }
 
     ParentCenterSubmission? parentCenter = null;
     if (!isCenter && request.ParentCenter != null)
