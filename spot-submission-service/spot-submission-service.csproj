@@ -13,6 +13,8 @@
     <PackageReference Include="AWSSDK.S3" Version="4.0.7.9" />
     <PackageReference Include="AWSSDK.SSO" Version="4.0.1.6" />
     <PackageReference Include="AWSSDK.SSOOIDC" Version="4.0.2.3" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.13" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="9.0.4" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.16.0" />
   </ItemGroup>
 </Project>
