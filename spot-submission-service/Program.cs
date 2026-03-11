@@ -1,20 +1,87 @@
 using Amazon.DynamoDBv2;
 using Amazon.S3;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using System;
-using System.Linq;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+
 builder.Services.AddDefaultAWSOptions(builder.Configuration.GetAWSOptions());
 builder.Services.AddAWSService<IAmazonDynamoDB>();
 builder.Services.AddAWSService<IAmazonS3>();
 builder.Services.AddScoped<SpotSubmissionRepository>();
 builder.Services.Configure<SpotSubmissionStorageOptions>(builder.Configuration.GetSection("SpotSubmissionStorage"));
 builder.Services.AddScoped<PhotoUploadService>();
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        string awsUrl = "https://cognito-idp.ap-southeast-1.amazonaws.com/ap-southeast-1_5KbPo5kdU";
+        options.Authority = awsUrl;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateAudience = false,
+            ValidateIssuer = true,
+            ValidIssuer = awsUrl,
+            ValidateLifetime = true
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
+            {
+                if (context.Principal == null)
+                {
+                    context.Fail("No principal found in token.");
+                }
+                else if (!context.Principal.Claims.Any(c =>
+                    c.Type == "client_id" &&
+                    c.Value == "47d5aql1gg87e093dfoqv8tbqs"))
+                {
+                    context.Fail("Invalid client_id");
+                }
+
+                return Task.CompletedTask;
+            }
+        };
+    });
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("AdminOnly", policy =>
+    {
+        policy.RequireClaim("cognito:groups", "admin");
+    });
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddSwaggerGen(options =>
+    {
+        options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            In = ParameterLocation.Header,
+            Description = "Paste your JWT token here"
+        });
+
+        options.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
+            {
+                new OpenApiSecurityScheme
+                {
+                    Reference = new OpenApiReference
+                    {
+                        Type = ReferenceType.SecurityScheme,
+                        Id = "Bearer"
+                    }
+                },
+                Array.Empty<string>()
+            }
+        });
+    });
+};
 
 var app = builder.Build();
 
@@ -77,6 +144,8 @@ else
 }
 
 var logger = app.Logger;
+app.UseAuthentication();
+app.UseAuthorization();
 app.Use(async (context, next) =>
 {
     var utcNow = DateTime.UtcNow.ToString("o");
@@ -121,7 +190,7 @@ app.MapPost("/spots/submissions/photos/presign",
             StorageKey = descriptor.StorageKey,
             ExpiresAt = descriptor.ExpiresAt
         });
-    });
+    }).RequireAuthorization();
 
 // POST /spots/submissions
 app.MapPost("/spots/submissions",
@@ -259,7 +328,7 @@ app.MapPost("/spots/submissions",
     await repo.SaveAsync(submission);
 
     return Results.Ok(new CreateSpotSubmissionResponse { Id = submission.Id, Status = submission.Status });
-});
+}).RequireAuthorization();
 
 // GET /moderation/submissions
 app.MapGet("/moderation/submissions",
@@ -267,7 +336,7 @@ app.MapGet("/moderation/submissions",
 {
     var submissions = await repo.GetAllAsync();
     return Results.Ok(submissions);
-});
+}).RequireAuthorization("AdminOnly");
 
 // POST /moderation/submissions/{id}/approve
 app.MapPost("/moderation/submissions/{id}/approve",
@@ -280,7 +349,7 @@ app.MapPost("/moderation/submissions/{id}/approve",
     var submission = await repo.GetByIdAsync(id);
     await repo.ApproveAsync(submission);
     return Results.Ok();
-});
+}).RequireAuthorization("AdminOnly");
 
 // POST /moderation/submissions/{id}/reject
 app.MapPost("/moderation/submissions/{id}/reject",
@@ -292,7 +361,7 @@ app.MapPost("/moderation/submissions/{id}/reject",
     }
     await repo.RejectAsync(id);
     return Results.Ok();
-});
+}).RequireAuthorization("AdminOnly");
 
 app.Run();
 
