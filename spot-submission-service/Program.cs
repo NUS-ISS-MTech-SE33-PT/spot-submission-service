@@ -6,6 +6,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 
+var allowedClientIds = new HashSet<string>(StringComparer.Ordinal)
+{
+    "47d5aql1gg87e093dfoqv8tbqs",
+    "oirif86fvv6eddccs4d37ccgb"
+};
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 
@@ -38,7 +44,7 @@ builder.Services
                 }
                 else if (!context.Principal.Claims.Any(c =>
                     c.Type == "client_id" &&
-                    c.Value == "47d5aql1gg87e093dfoqv8tbqs"))
+                    allowedClientIds.Contains(c.Value)))
                 {
                     context.Fail("Invalid client_id");
                 }
