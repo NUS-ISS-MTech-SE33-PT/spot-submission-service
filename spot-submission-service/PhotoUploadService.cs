@@ -118,6 +118,23 @@ public class PhotoUploadService
             throw new ArgumentException("Unsupported content type.");
         }
 
+        var fileHeader = await ReadFileHeaderAsync(storageKey, cancellationToken);
+        var detectedContentType = DetectContentTypeFromHeader(fileHeader);
+        if (!IsAllowed(_options.AllowedContentTypes, detectedContentType))
+        {
+            throw new ArgumentException("Unsupported file header.");
+        }
+
+        if (!string.Equals(detectedContentType, contentType, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Uploaded file header does not match its content type.");
+        }
+
+        if (!IsMimeExtensionMatch(detectedContentType, extension))
+        {
+            throw new ArgumentException("Uploaded file header does not match its file extension.");
+        }
+
         if (!IsMimeExtensionMatch(contentType, extension))
         {
             throw new ArgumentException("Uploaded file format does not match its content type.");
@@ -256,6 +273,73 @@ public class PhotoUploadService
             ("image/webp", ".webp") => true,
             _ => false
         };
+    }
+
+    private async Task<byte[]> ReadFileHeaderAsync(string storageKey, CancellationToken cancellationToken)
+    {
+        const int headerLength = 16;
+        using var response = await _s3.GetObjectAsync(new GetObjectRequest
+        {
+            BucketName = _options.BucketName,
+            Key = storageKey,
+            ByteRange = new ByteRange(0, headerLength - 1)
+        }, cancellationToken);
+
+        var buffer = new byte[headerLength];
+        var totalRead = 0;
+        while (totalRead < buffer.Length)
+        {
+            var read = await response.ResponseStream.ReadAsync(
+                buffer.AsMemory(totalRead, buffer.Length - totalRead),
+                cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            totalRead += read;
+        }
+
+        return totalRead == buffer.Length ? buffer : buffer[..totalRead];
+    }
+
+    private static string DetectContentTypeFromHeader(byte[] headerBytes)
+    {
+        if (headerBytes.Length >= 3 &&
+            headerBytes[0] == 0xFF &&
+            headerBytes[1] == 0xD8 &&
+            headerBytes[2] == 0xFF)
+        {
+            return "image/jpeg";
+        }
+
+        if (headerBytes.Length >= 8 &&
+            headerBytes[0] == 0x89 &&
+            headerBytes[1] == 0x50 &&
+            headerBytes[2] == 0x4E &&
+            headerBytes[3] == 0x47 &&
+            headerBytes[4] == 0x0D &&
+            headerBytes[5] == 0x0A &&
+            headerBytes[6] == 0x1A &&
+            headerBytes[7] == 0x0A)
+        {
+            return "image/png";
+        }
+
+        if (headerBytes.Length >= 12 &&
+            headerBytes[0] == 0x52 &&
+            headerBytes[1] == 0x49 &&
+            headerBytes[2] == 0x46 &&
+            headerBytes[3] == 0x46 &&
+            headerBytes[8] == 0x57 &&
+            headerBytes[9] == 0x45 &&
+            headerBytes[10] == 0x42 &&
+            headerBytes[11] == 0x50)
+        {
+            return "image/webp";
+        }
+
+        return string.Empty;
     }
 
     private string ResolvePublicBaseUrl()

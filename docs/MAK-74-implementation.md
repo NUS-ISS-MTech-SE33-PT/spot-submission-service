@@ -5,6 +5,7 @@
 - Added server-side S3 metadata validation before saving a spot submission.
 - Switched the upload flow from presigned PUT to presigned POST.
 - Added upload-time `content-length-range` enforcement in the S3 POST policy.
+- Added server-side file header validation against JPEG, PNG, and WEBP signatures.
 
 ## Implemented
 - Max file size limit (`SpotSubmissionStorageOptions.MaxUploadBytes`, default 5 MB).
@@ -12,6 +13,7 @@
 - Unsupported extension rejection (`.jpg`, `.jpeg`, `.png`, `.webp`).
 - MIME/extension consistency checks.
 - Upload-time S3 POST policy constraints for `Content-Type` and file size.
+- File signature validation using object header bytes after upload.
 - Submission-time verification of `photoUrl` and `photoStorageKey` mapping.
 
 ## Pending / Notes
