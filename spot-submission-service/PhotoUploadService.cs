@@ -26,23 +26,25 @@ public class PhotoUploadService
         var key = BuildObjectKey(fileName, userSubject);
         var expiryMinutes = _options.UrlExpiryMinutes <= 0 ? 15 : _options.UrlExpiryMinutes;
         var expiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes);
-
-        var request = new GetPreSignedUrlRequest
+        var normalizedContentType = NormalizeContentType(contentType);
+        var request = new CreatePresignedPostRequest
         {
             BucketName = _options.BucketName,
             Key = key,
-            Verb = HttpVerb.PUT,
-            Expires = expiresAt,
-            ContentType = contentType
+            Expires = expiresAt
         };
+        request.Fields["Content-Type"] = normalizedContentType;
+        request.Conditions.Add(S3PostCondition.ExactMatch("Content-Type", normalizedContentType));
+        request.Conditions.Add(S3PostCondition.ContentLengthRange(1, ResolveMaxUploadBytes()));
 
-        var uploadUrl = _s3.GetPreSignedURL(request);
+        var presignedPost = _s3.CreatePresignedPost(request);
         var baseUrl = ResolvePublicBaseUrl();
         var fileUrl = $"{baseUrl}/{key}";
 
         return new PhotoUploadDescriptor
         {
-            UploadUrl = uploadUrl,
+            UploadUrl = presignedPost.Url,
+            UploadFields = new Dictionary<string, string>(presignedPost.Fields, StringComparer.Ordinal),
             FileUrl = fileUrl,
             StorageKey = key,
             ExpiresAt = expiresAt
@@ -104,7 +106,7 @@ public class PhotoUploadService
             Key = storageKey
         }, cancellationToken);
 
-        var maxUploadBytes = _options.MaxUploadBytes > 0 ? _options.MaxUploadBytes : 10 * 1024 * 1024;
+        var maxUploadBytes = ResolveMaxUploadBytes();
         if (metadata.Headers.ContentLength > maxUploadBytes)
         {
             throw new ArgumentException($"File size exceeds limit ({maxUploadBytes} bytes).");
@@ -270,5 +272,10 @@ public class PhotoUploadService
         }
 
         return $"https://{_options.BucketName}.s3.{region}.amazonaws.com";
+    }
+
+    private long ResolveMaxUploadBytes()
+    {
+        return _options.MaxUploadBytes > 0 ? _options.MaxUploadBytes : 5 * 1024 * 1024;
     }
 }
