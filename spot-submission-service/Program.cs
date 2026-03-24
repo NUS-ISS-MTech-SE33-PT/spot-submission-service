@@ -192,6 +192,7 @@ app.MapPost("/spots/submissions/photos/presign",
         return Results.Ok(new CreatePhotoUploadUrlResponse
         {
             UploadUrl = descriptor.UploadUrl,
+            UploadFields = new Dictionary<string, string>(descriptor.UploadFields, StringComparer.Ordinal),
             PhotoUrl = descriptor.FileUrl,
             StorageKey = descriptor.StorageKey,
             ExpiresAt = descriptor.ExpiresAt
