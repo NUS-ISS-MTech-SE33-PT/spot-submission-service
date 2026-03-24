@@ -49,22 +49,53 @@ public class PhotoUploadServiceTests
     [Test]
     public void CreateUploadUrl_ShouldReturnExpectedValues()
     {
-        _mockS3.Setup(s3 => s3.GetPreSignedURL(It.IsAny<GetPreSignedUrlRequest>()))
-               .Returns("https://presigned.example.com/upload");
+        CreatePresignedPostRequest? capturedRequest = null;
+        _mockS3.Setup(s3 => s3.CreatePresignedPost(It.IsAny<CreatePresignedPostRequest>()))
+               .Callback<CreatePresignedPostRequest>(request => capturedRequest = request)
+               .Returns(new CreatePresignedPostResponse
+               {
+                   Url = "https://presigned.example.com/upload",
+                   Fields = new Dictionary<string, string>(StringComparer.Ordinal)
+                   {
+                       ["key"] = "uploads/user123/photo.jpg",
+                       ["Content-Type"] = "image/jpeg"
+                   }
+               });
 
         var result = _service.CreateUploadUrl("photo.jpg", "image/jpeg", "user123");
 
         Assert.That(result.UploadUrl, Is.EqualTo("https://presigned.example.com/upload"));
+        Assert.That(result.UploadFields["Content-Type"], Is.EqualTo("image/jpeg"));
         Assert.That(result.FileUrl, Does.StartWith("https://cdn.example.com/uploads/user123/"));
         Assert.That(result.StorageKey, Does.EndWith(".jpg"));
         Assert.That(result.ExpiresAt, Is.GreaterThan(DateTime.UtcNow));
+        Assert.That(capturedRequest, Is.Not.Null);
+        Assert.That(capturedRequest!.BucketName, Is.EqualTo("test-bucket"));
+        Assert.That(capturedRequest.Key, Does.StartWith("uploads/user123/"));
+
+        var sizeCondition = capturedRequest.Conditions.OfType<ContentLengthRangeCondition>().Single();
+        Assert.That(sizeCondition.MinimumLength, Is.EqualTo(1));
+        Assert.That(sizeCondition.MaximumLength, Is.EqualTo(5 * 1024 * 1024));
+
+        var contentTypeCondition = capturedRequest.Conditions
+            .OfType<ExactMatchCondition>()
+            .Single(condition => condition.FieldName == "Content-Type");
+        Assert.That(contentTypeCondition.ExpectedValue, Is.EqualTo("image/jpeg"));
     }
 
     [Test]
     public void CreateUploadUrl_ShouldHandleNullUserSubject()
     {
-        _mockS3.Setup(s3 => s3.GetPreSignedURL(It.IsAny<GetPreSignedUrlRequest>()))
-               .Returns("https://presigned.example.com/upload");
+        _mockS3.Setup(s3 => s3.CreatePresignedPost(It.IsAny<CreatePresignedPostRequest>()))
+               .Returns(new CreatePresignedPostResponse
+               {
+                   Url = "https://presigned.example.com/upload",
+                   Fields = new Dictionary<string, string>(StringComparer.Ordinal)
+                   {
+                       ["key"] = "uploads/photo.png",
+                       ["Content-Type"] = "image/png"
+                   }
+               });
 
         var result = _service.CreateUploadUrl("photo.png", "image/png", null);
 
