@@ -43,7 +43,7 @@ builder.Services
                     context.Fail("No principal found in token.");
                 }
                 else if (!context.Principal.Claims.Any(c =>
-                    c.Type == "client_id" &&
+                    c.Type == "aud" &&
                     allowedClientIds.Contains(c.Value)))
                 {
                     context.Fail("Invalid client_id");
