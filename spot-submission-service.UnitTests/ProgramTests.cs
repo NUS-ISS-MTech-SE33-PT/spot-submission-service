@@ -19,6 +19,7 @@ public class ProgramTests
     private Mock<IAmazonDynamoDB> _dynamoDbMock = null!;
     private const string Issuer = "https://tests.example.com/spot-submission-service";
     private const string AllowedClientId = "submission-client";
+    private const string SecondaryAllowedClientId = "submission-client-admin";
     private const string SigningKey = "spot-submission-service-test-signing-key-123456";
 
     [SetUp]
@@ -43,6 +44,7 @@ public class ProgramTests
                     {
                         [$"{JwtValidationOptions.SectionName}:Issuer"] = Issuer,
                         [$"{JwtValidationOptions.SectionName}:AllowedClientIds:0"] = AllowedClientId,
+                        [$"{JwtValidationOptions.SectionName}:AllowedClientIds:1"] = SecondaryAllowedClientId,
                         [$"{JwtValidationOptions.SectionName}:SigningKey"] = SigningKey,
                         ["DynamoDb"] = "submissions-test",
                         ["SpotsTable"] = "spots-test"
@@ -53,7 +55,7 @@ public class ProgramTests
                     services.PostConfigure<JwtValidationOptions>(options =>
                     {
                         options.Issuer = Issuer;
-                        options.AllowedClientIds = [AllowedClientId];
+                        options.AllowedClientIds = [AllowedClientId, SecondaryAllowedClientId];
                         options.SigningKey = SigningKey;
                     });
                     services.AddScoped(_ => new SpotSubmissionRepository(
@@ -146,6 +148,19 @@ public class ProgramTests
     {
         var client = _factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new("Bearer", CreateToken(groups: ["admin"]));
+
+        var response = await client.GetAsync("/moderation/submissions");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    [Test]
+    public async Task ModerationEndpoint_ShouldReturnOk_WhenSecondAllowedClientIdIsUsed()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new(
+            "Bearer",
+            CreateToken(clientId: SecondaryAllowedClientId, groups: ["admin"]));
 
         var response = await client.GetAsync("/moderation/submissions");
 
