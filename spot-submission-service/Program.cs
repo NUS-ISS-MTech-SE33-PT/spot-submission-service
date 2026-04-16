@@ -3,14 +3,7 @@ using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-
-var allowedClientIds = new HashSet<string>(StringComparer.Ordinal)
-{
-    "47d5aql1gg87e093dfoqv8tbqs",
-    "oirif86fvv6eddccs4d37ccgb"
-};
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
@@ -21,38 +14,14 @@ builder.Services.AddAWSService<IAmazonS3>();
 builder.Services.AddScoped<SpotSubmissionRepository>();
 builder.Services.Configure<SpotSubmissionStorageOptions>(builder.Configuration.GetSection("SpotSubmissionStorage"));
 builder.Services.AddScoped<PhotoUploadService>();
+builder.Services.AddOptions<JwtValidationOptions>()
+    .Bind(builder.Configuration.GetSection(JwtValidationOptions.SectionName));
+builder.Services.AddSingleton<
+    Microsoft.Extensions.Options.IConfigureOptions<JwtBearerOptions>,
+    ConfigureJwtBearerOptions>();
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        string awsUrl = "https://cognito-idp.ap-southeast-1.amazonaws.com/ap-southeast-1_5KbPo5kdU";
-        options.Authority = awsUrl;
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateAudience = false,
-            ValidateIssuer = true,
-            ValidIssuer = awsUrl,
-            ValidateLifetime = true
-        };
-        options.Events = new JwtBearerEvents
-        {
-            OnTokenValidated = context =>
-            {
-                if (context.Principal == null)
-                {
-                    context.Fail("No principal found in token.");
-                }
-                else if (!context.Principal.Claims.Any(c =>
-                    c.Type == "aud" &&
-                    allowedClientIds.Contains(c.Value)))
-                {
-                    context.Fail("Invalid client_id");
-                }
-
-                return Task.CompletedTask;
-            }
-        };
-    });
+    .AddJwtBearer();
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("AdminOnly", policy =>
     {
@@ -349,11 +318,11 @@ app.MapGet("/moderation/submissions",
 app.MapPost("/moderation/submissions/{id}/approve",
     async (string id, HttpContext ctx, [FromServices] SpotSubmissionRepository repo) =>
 {
-    if (!await repo.ExistsAsync(id))
+    var submission = await repo.GetByIdAsync(id);
+    if (submission == null)
     {
         return ApiError(ctx, StatusCodes.Status404NotFound, "not_found", "Submission not found.");
     }
-    var submission = await repo.GetByIdAsync(id);
     await repo.ApproveAsync(submission);
     return Results.Ok();
 }).RequireAuthorization("AdminOnly");

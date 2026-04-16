@@ -1,31 +1,72 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Claims;
+using System.Text;
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.IdentityModel.Tokens;
 using Moq;
 
 [TestFixture]
 public class ProgramTests
 {
     private WebApplicationFactory<Program> _factory = null!;
-    private Mock<SpotSubmissionRepository> _repoMock = null!;
+    private Mock<IAmazonDynamoDB> _dynamoDbMock = null!;
+    private const string Issuer = "https://tests.example.com/spot-submission-service";
+    private const string AllowedClientId = "submission-client";
+    private const string SecondaryAllowedClientId = "submission-client-admin";
+    private const string SigningKey = "spot-submission-service-test-signing-key-123456";
 
     [SetUp]
     public void SetUp()
     {
-        _repoMock = new Mock<SpotSubmissionRepository>(
-            Mock.Of<Amazon.DynamoDBv2.IAmazonDynamoDB>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<SpotSubmissionRepository>>());
+        _dynamoDbMock = new Mock<IAmazonDynamoDB>();
+        _dynamoDbMock
+            .Setup(dynamoDb => dynamoDb.ScanAsync(
+                It.IsAny<ScanRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResponse
+            {
+                Items = new List<Dictionary<string, AttributeValue>>()
+            });
 
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
+                builder.ConfigureAppConfiguration((_, configBuilder) =>
+                {
+                    configBuilder.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        [$"{JwtValidationOptions.SectionName}:Issuer"] = Issuer,
+                        [$"{JwtValidationOptions.SectionName}:AllowedClientIds:0"] = AllowedClientId,
+                        [$"{JwtValidationOptions.SectionName}:AllowedClientIds:1"] = SecondaryAllowedClientId,
+                        [$"{JwtValidationOptions.SectionName}:SigningKey"] = SigningKey,
+                        ["DynamoDb"] = "submissions-test",
+                        ["SpotsTable"] = "spots-test"
+                    });
+                });
                 builder.ConfigureServices(services =>
                 {
-                    services.AddScoped(_ => _repoMock.Object);
+                    services.PostConfigure<JwtValidationOptions>(options =>
+                    {
+                        options.Issuer = Issuer;
+                        options.AllowedClientIds = [AllowedClientId, SecondaryAllowedClientId];
+                        options.SigningKey = SigningKey;
+                    });
+                    services.AddScoped(_ => new SpotSubmissionRepository(
+                        _dynamoDbMock.Object,
+                        new ConfigurationBuilder()
+                            .AddInMemoryCollection(new Dictionary<string, string?>
+                            {
+                                ["DynamoDb"] = "submissions-test",
+                                ["SpotsTable"] = "spots-test"
+                            })
+                            .Build()));
                 });
             });
     }
@@ -44,5 +85,123 @@ public class ProgramTests
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         var date = await response.Content.ReadFromJsonAsync<DateTime>();
         Assert.That(date, Is.Not.EqualTo(default(DateTime)));
+    }
+
+    [Test]
+    public async Task ModerationEndpoint_ShouldReturnUnauthorized_WhenTokenMissing()
+    {
+        var client = _factory.CreateClient();
+        var response = await client.GetAsync("/moderation/submissions");
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
+
+    [Test]
+    public async Task ModerationEndpoint_ShouldReturnUnauthorized_WhenClientIdIsNotAllowed()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", CreateToken(clientId: "other-client", groups: ["admin"]));
+
+        var response = await client.GetAsync("/moderation/submissions");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
+
+    [Test]
+    public async Task ModerationEndpoint_ShouldReturnUnauthorized_WhenTokenUseIsId()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", CreateToken(tokenUse: "id", groups: ["admin"]));
+
+        var response = await client.GetAsync("/moderation/submissions");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
+
+    [Test]
+    public async Task ModerationEndpoint_ShouldReturnUnauthorized_WhenTokenIsExpired()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new(
+            "Bearer",
+            CreateToken(groups: ["admin"], expiresAt: DateTime.UtcNow.AddMinutes(-5)));
+
+        var response = await client.GetAsync("/moderation/submissions");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
+
+    [Test]
+    public async Task ModerationEndpoint_ShouldReturnUnauthorized_WhenIssuerIsWrong()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new(
+            "Bearer",
+            CreateToken(groups: ["admin"], issuer: "https://tests.example.com/wrong-issuer"));
+
+        var response = await client.GetAsync("/moderation/submissions");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
+
+    [Test]
+    public async Task ModerationEndpoint_ShouldReturnOk_WhenTokenIsValidAdminAccessToken()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", CreateToken(groups: ["admin"]));
+
+        var response = await client.GetAsync("/moderation/submissions");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    [Test]
+    public async Task ModerationEndpoint_ShouldReturnOk_WhenSecondAllowedClientIdIsUsed()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new(
+            "Bearer",
+            CreateToken(clientId: SecondaryAllowedClientId, groups: ["admin"]));
+
+        var response = await client.GetAsync("/moderation/submissions");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    private static string CreateToken(
+        string subject = "user-123",
+        string clientId = AllowedClientId,
+        string tokenUse = "access",
+        IEnumerable<string>? groups = null,
+        string issuer = Issuer,
+        DateTime? expiresAt = null)
+    {
+        var claims = new List<Claim>
+        {
+            new("sub", subject),
+            new("client_id", clientId),
+            new("token_use", tokenUse)
+        };
+
+        if (groups != null)
+        {
+            claims.AddRange(groups.Select(group => new Claim("cognito:groups", group)));
+        }
+
+        var credentials = new SigningCredentials(
+            new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SigningKey)),
+            SecurityAlgorithms.HmacSha256);
+        var notBefore = expiresAt.HasValue && expiresAt.Value <= DateTime.UtcNow
+            ? expiresAt.Value.AddMinutes(-10)
+            : DateTime.UtcNow.AddMinutes(-1);
+
+        var token = new JwtSecurityToken(
+            issuer: issuer,
+            audience: null,
+            claims: claims,
+            notBefore: notBefore,
+            expires: expiresAt ?? DateTime.UtcNow.AddMinutes(5),
+            signingCredentials: credentials);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 }
