@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../makan-go-common/MakanGo.Common/MakanGo.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.6.6" />
     <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="4.0.3.4" />
     <PackageReference Include="AWSSDK.S3" Version="4.0.7.9" />
