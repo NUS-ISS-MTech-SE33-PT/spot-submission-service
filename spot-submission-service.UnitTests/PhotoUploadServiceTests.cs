@@ -177,6 +177,67 @@ public class PhotoUploadServiceTests
     }
 
     [Test]
+    public async Task ValidateUploadedObjectAsync_ShouldRequireCleanScanStatus_WhenEnforced()
+    {
+        const string storageKey = "uploads/user123/photo.png";
+        const string photoUrl = "https://cdn.example.com/uploads/user123/photo.png";
+        _options.EnforceScanStatus = true;
+        SetupMetadata(storageKey, "image/png", 1024);
+        SetupObjectHeader(storageKey, new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+        SetupObjectTags(storageKey, "clean");
+
+        await _service.ValidateUploadedObjectAsync(storageKey, photoUrl);
+    }
+
+    [Test]
+    public void ValidateUploadedObjectAsync_ShouldRejectMissingScanStatus_WhenEnforced()
+    {
+        const string storageKey = "uploads/user123/photo.png";
+        const string photoUrl = "https://cdn.example.com/uploads/user123/photo.png";
+        _options.EnforceScanStatus = true;
+        SetupMetadata(storageKey, "image/png", 1024);
+        SetupObjectHeader(storageKey, new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+        SetupObjectTags(storageKey);
+
+        var ex = Assert.ThrowsAsync<ArgumentException>(async () =>
+            await _service.ValidateUploadedObjectAsync(storageKey, photoUrl));
+
+        Assert.That(ex!.Message, Is.EqualTo("Uploaded photo is still being scanned."));
+    }
+
+    [Test]
+    public void ValidateUploadedObjectAsync_ShouldRejectInfectedScanStatus_WhenEnforced()
+    {
+        const string storageKey = "uploads/user123/photo.png";
+        const string photoUrl = "https://cdn.example.com/uploads/user123/photo.png";
+        _options.EnforceScanStatus = true;
+        SetupMetadata(storageKey, "image/png", 1024);
+        SetupObjectHeader(storageKey, new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+        SetupObjectTags(storageKey, "infected");
+
+        var ex = Assert.ThrowsAsync<ArgumentException>(async () =>
+            await _service.ValidateUploadedObjectAsync(storageKey, photoUrl));
+
+        Assert.That(ex!.Message, Is.EqualTo("Uploaded photo failed malware scan."));
+    }
+
+    [Test]
+    public void ValidateUploadedObjectAsync_ShouldRejectScanErrors_WhenEnforced()
+    {
+        const string storageKey = "uploads/user123/photo.png";
+        const string photoUrl = "https://cdn.example.com/uploads/user123/photo.png";
+        _options.EnforceScanStatus = true;
+        SetupMetadata(storageKey, "image/png", 1024);
+        SetupObjectHeader(storageKey, new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+        SetupObjectTags(storageKey, "error");
+
+        var ex = Assert.ThrowsAsync<ArgumentException>(async () =>
+            await _service.ValidateUploadedObjectAsync(storageKey, photoUrl));
+
+        Assert.That(ex!.Message, Is.EqualTo("Uploaded photo could not be scanned."));
+    }
+
+    [Test]
     public void ResolvePublicBaseUrl_ShouldUseConfiguredValue()
     {
         var method = typeof(PhotoUploadService)
@@ -226,5 +287,28 @@ public class PhotoUploadServiceTests
             {
                 ResponseStream = new MemoryStream(headerBytes)
             });
+    }
+
+    private void SetupObjectTags(string storageKey, string? scanStatus = null)
+    {
+        var response = new GetObjectTaggingResponse
+        {
+            Tagging = new List<Tag>()
+        };
+        if (scanStatus != null)
+        {
+            response.Tagging.Add(new Tag
+            {
+                Key = _options.ScanStatusTagKey,
+                Value = scanStatus
+            });
+        }
+
+        _mockS3.Setup(s3 => s3.GetObjectTaggingAsync(
+                It.Is<GetObjectTaggingRequest>(request =>
+                    request.BucketName == _options.BucketName &&
+                    request.Key == storageKey),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
     }
 }
