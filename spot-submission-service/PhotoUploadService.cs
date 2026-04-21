@@ -139,6 +139,8 @@ public class PhotoUploadService
         {
             throw new ArgumentException("Uploaded file format does not match its content type.");
         }
+
+        await ValidateScanStatusAsync(storageKey, cancellationToken);
     }
 
     public bool IsOwnedByUser(string storageKey, string photoUrl, string userSubject)
@@ -340,6 +342,61 @@ public class PhotoUploadService
         }
 
         return string.Empty;
+    }
+
+    private async Task ValidateScanStatusAsync(string storageKey, CancellationToken cancellationToken)
+    {
+        if (!_options.EnforceScanStatus)
+        {
+            return;
+        }
+
+        var tagKey = _options.ScanStatusTagKey?.Trim();
+        if (string.IsNullOrWhiteSpace(tagKey))
+        {
+            throw new InvalidOperationException("SpotSubmissionStorage:ScanStatusTagKey is not configured.");
+        }
+
+        var requiredStatus = NormalizeTagValue(_options.RequiredScanStatus);
+        if (string.IsNullOrWhiteSpace(requiredStatus))
+        {
+            throw new InvalidOperationException("SpotSubmissionStorage:RequiredScanStatus is not configured.");
+        }
+
+        var taggingResponse = await _s3.GetObjectTaggingAsync(new GetObjectTaggingRequest
+        {
+            BucketName = _options.BucketName,
+            Key = storageKey
+        }, cancellationToken);
+
+        var scanStatus = taggingResponse.Tagging?
+            .FirstOrDefault(tag => string.Equals(tag.Key, tagKey, StringComparison.OrdinalIgnoreCase))
+            ?.Value;
+
+        if (string.IsNullOrWhiteSpace(scanStatus))
+        {
+            throw new ArgumentException("Uploaded photo is still being scanned.");
+        }
+
+        var normalizedStatus = NormalizeTagValue(scanStatus);
+        if (string.Equals(normalizedStatus, requiredStatus, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        throw normalizedStatus switch
+        {
+            "infected" => new ArgumentException("Uploaded photo failed malware scan."),
+            "error" => new ArgumentException("Uploaded photo could not be scanned."),
+            _ => new ArgumentException("Uploaded photo is still being scanned.")
+        };
+    }
+
+    private static string NormalizeTagValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToLowerInvariant();
     }
 
     private string ResolvePublicBaseUrl()

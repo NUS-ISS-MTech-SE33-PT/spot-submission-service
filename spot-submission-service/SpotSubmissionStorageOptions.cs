@@ -7,4 +7,7 @@ public class SpotSubmissionStorageOptions
     public long MaxUploadBytes { get; set; } = 5 * 1024 * 1024;
     public string[] AllowedContentTypes { get; set; } = ["image/jpeg", "image/png", "image/webp"];
     public string[] AllowedExtensions { get; set; } = [".jpg", ".jpeg", ".png", ".webp"];
+    public bool EnforceScanStatus { get; set; }
+    public string ScanStatusTagKey { get; set; } = "scan-status";
+    public string RequiredScanStatus { get; set; } = "clean";
 }
